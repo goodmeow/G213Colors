@@ -40,22 +40,15 @@ def parse_arguments():
         choices=config_manager.SUPPORTED_PRODUCTS,
         help=f"Apply user-specific saved configuration for the given PRODUCT_NAME and exit. Choices: {config_manager.SUPPORTED_PRODUCTS}"
     )
-
-    try:
-        return parser.parse_args()
-    except SystemExit as e:
-        sys.exit(e.code)
+    return parser.parse_args()
 
 
-def handle_cli_actions(args) -> bool:
+def handle_cli_actions(args):
     """
-    Handle CLI actions and return True if program should exit.
-    
+    Handle CLI actions. Exits the program if a CLI action is processed.
+
     Args:
         args: Parsed command-line arguments
-        
-    Returns:
-        True if a CLI action was processed and program should exit
     """
     if args.apply_system_default:
         logger.info("Option '-t' / '--apply-system-default' detected. Applying system default saved settings.")
@@ -70,22 +63,13 @@ def handle_cli_actions(args) -> bool:
     if args.apply_user_config:
         product_to_load = args.apply_user_config
         logger.info(f"Option '--apply-user-config' detected for product: {product_to_load}")
-        user_conf_path = config_manager.get_user_config_path(product_to_load)
-        logger.info(f"Attempting to load user config from: {user_conf_path}")
-
-        if not os.path.exists(user_conf_path):
-            logger.warning(f"User configuration file not found for {product_to_load} at {user_conf_path}. Nothing to apply.")
-            sys.exit(0)
-
         success = config_manager.apply_user_config(product_to_load)
         if success:
-            logger.info(f"User settings for {product_to_load} applied successfully from {user_conf_path}.")
+            logger.info(f"User settings for {product_to_load} applied successfully.")
             sys.exit(0)
         else:
-            logger.error(f"Failed to apply user settings for {product_to_load} from {user_conf_path}.")
+            logger.error(f"Failed to apply user settings for {product_to_load}.")
             sys.exit(1)
-    
-    return False
 
 
 # --- GUI Application Class ---
@@ -192,10 +176,6 @@ class Window(Gtk.Window):
         blue = int(color.blue * 255)
         return f"{red:02x}{green:02x}{blue:02x}"
 
-    def sbGetValue(self, sb: Gtk.SpinButton) -> int:
-        """Get integer value from Gtk.SpinButton."""
-        return sb.get_value_as_int()
-
     def _show_error_dialog(self, primary_text: str, secondary_text: str = ""):
         """Show an error dialog to the user."""
         dialog = Gtk.MessageDialog(
@@ -254,7 +234,7 @@ class Window(Gtk.Window):
             return
 
         color_hex = self.btnGetHex(self.breatheColorButton)
-        speed = self.sbGetValue(self.sbBCycle)
+        speed = self.sbBCycle.get_value_as_int()
         if controller.send_breathe_command(color_hex, speed):
             logger.info(f"Breathe command sent to {product}.")
             command_to_save = controller.spec["breatheCommand"].format(color_hex, f"{speed:04x}")
@@ -274,7 +254,7 @@ class Window(Gtk.Window):
             self._show_error_dialog(f"Connection failed: {product}", "Could not connect to the device.")
             return
 
-        speed = self.sbGetValue(self.sbCycle)
+        speed = self.sbCycle.get_value_as_int()
         if controller.send_cycle_command(speed):
             logger.info(f"Cycle command sent to {product}.")
             command_to_save = controller.spec["cycleCommand"].format(f"{speed:04x}")

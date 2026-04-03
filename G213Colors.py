@@ -172,15 +172,15 @@ class LogitechDevice:
     def connect(self, max_retries: int = 2) -> bool:
         """
         Connect to the USB device with retry mechanism for better error recovery.
-        
+
         Args:
             max_retries: Maximum number of connection retries
-            
+
         Returns:
             True if connection successful, False otherwise
         """
         logger.info(f"Attempting to connect to: {self.product_name}")
-        
+
         for attempt in range(max_retries + 1):
             try:
                 self.device = usb.core.find(idVendor=self.ID_VENDOR, idProduct=self.spec["idProduct"])
@@ -203,7 +203,7 @@ class LogitechDevice:
                     logger.error(f"Permission denied for {self.product_name}. Ensure udev rules are set.")
                     self.device = None
                     return False
-                
+
                 if attempt < max_retries:
                     logger.warning(f"USBError during connect for {self.product_name}: {e}. Retrying ({attempt + 1}/{max_retries})...")
                     time.sleep(0.5)
@@ -215,7 +215,17 @@ class LogitechDevice:
                 logger.error(f"Unexpected error during connect for {self.product_name}: {e}")
                 self.device = None
                 return False
-        
+
+        return False
+
+    def __enter__(self):
+        """Context manager entry — connect automatically."""
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit — disconnect automatically."""
+        self.disconnect()
         return False
 
     def disconnect(self) -> None:
@@ -307,7 +317,7 @@ class LogitechDevice:
         """
         color_hex = _validate_color_hex(color_hex)
         field = _validate_field(field)
-        command_string = self.spec["colorCommand"].format(str(format(field, '02x')), color_hex)
+        command_string = self.spec["colorCommand"].format(f"{field:02x}", color_hex)
         if self._send_data(command_string):
             if self.spec["needs_receive_after_color"]:
                 self._receive_data()
@@ -330,7 +340,7 @@ class LogitechDevice:
         """
         color_hex = _validate_color_hex(color_hex)
         speed = _validate_speed(speed)
-        command_string = self.spec["breatheCommand"].format(color_hex, str(format(speed, '04x')))
+        command_string = self.spec["breatheCommand"].format(color_hex, f"{speed:04x}")
         return self._send_data(command_string)
 
     def send_cycle_command(self, speed: int) -> bool:
@@ -347,7 +357,7 @@ class LogitechDevice:
             ValueError: If speed is invalid
         """
         speed = _validate_speed(speed)
-        command_string = self.spec["cycleCommand"].format(str(format(speed, '04x')))
+        command_string = self.spec["cycleCommand"].format(f"{speed:04x}")
         return self._send_data(command_string)
 
     def save_configuration(self, command_data_string: str, file_path: str) -> bool:

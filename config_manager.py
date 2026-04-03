@@ -12,9 +12,9 @@ import G213Colors
 
 logger = logging.getLogger(__name__)
 
-# Application constants
+# Application constants — derived from G213Colors to avoid duplication
 APP_NAME = "G213 Colors"
-SUPPORTED_PRODUCTS = ["G213", "G203"]
+SUPPORTED_PRODUCTS = list(G213Colors.LogitechDevice.PRODUCT_SPECS.keys())
 USER_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "G213Colors")
 AUTOSTART_DIR = os.path.join(os.path.expanduser("~"), ".config", "autostart")
 
@@ -35,7 +35,6 @@ def _sanitize_product_name(product_name: str) -> str:
     """
     if not isinstance(product_name, str):
         raise ValueError(f"Product name must be a string, got {type(product_name).__name__}")
-    # Only allow alphanumeric characters
     if not re.match(r'^[A-Za-z0-9]+$', product_name):
         raise ValueError(f"Invalid product name: '{product_name}'. Only alphanumeric characters allowed.")
     if product_name not in SUPPORTED_PRODUCTS:

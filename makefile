@@ -5,12 +5,12 @@ SYSTEMDDIR = /etc/systemd/system
 ICONDIR = /usr/share/icons/hicolor
 APPDIR = /usr/share/applications
 POLKITDIR = /usr/share/polkit-1/actions
-
 UDEVDIR = /etc/udev/rules.d
 
 .PHONY: install uninstall
 
 install:
+	@echo "=== Installing G213Colors ==="
 	install -Dm755 G213Colors.py $(BINDIR)/G213Colors.py
 	install -Dm755 main.py $(BINDIR)/g213colors-gui
 	install -Dm644 config_manager.py $(BINDIR)/config_manager.py
@@ -23,10 +23,31 @@ install:
 	install -Dm644 icons/G213Colors-192.png $(ICONDIR)/192x192/apps/g213colors.png
 	install -Dm644 G213Colors.desktop $(APPDIR)/g213colors.desktop
 	install -Dm644 be.jeroened.pkexec.g213colors.policy $(POLKITDIR)/be.jeroened.pkexec.g213colors.policy
+	@echo "Creating udev rules for Logitech device permissions..."
+	@printf '%s\n' \
+		'# Logitech G213 Keyboard' \
+		'SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c336", MODE="0666"' \
+		'' \
+		'# Logitech G203 Mouse' \
+		'SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c084", MODE="0666"' \
+		| install -Dm644 /dev/stdin $(UDEVDIR)/99-logitech-usb-permissions.rules
+	@if [ ! -f $(SYSCONFDIR)/G213Colors.conf ]; then \
+		echo "Creating default system configuration at $(SYSCONFDIR)/G213Colors.conf..."; \
+		printf 'PRODUCT=G213\n11ff0c3a0001ffb4aa0200000000000000000000\n' > $(SYSCONFDIR)/G213Colors.conf; \
+	else \
+		echo "System configuration already exists at $(SYSCONFDIR)/G213Colors.conf, skipping."; \
+	fi
+	@echo "Reloading udev rules..."
+	-udevadm control --reload-rules 2>/dev/null || true
+	-udevadm trigger 2>/dev/null || true
 	-gtk-update-icon-cache -q $(ICONDIR)/ 2>/dev/null || true
 	-systemctl daemon-reload 2>/dev/null || true
+	@echo "=== Installation complete ==="
+	@echo "Run 'g213colors-gui' to launch the application."
+	@echo "Enable system service with: sudo systemctl enable g213colors.service"
 
 uninstall:
+	@echo "=== Uninstalling G213Colors ==="
 	-rm -f $(BINDIR)/G213Colors.py
 	-rm -f $(BINDIR)/g213colors-gui
 	-rm -f $(BINDIR)/config_manager.py
@@ -41,6 +62,8 @@ uninstall:
 	-rm -f $(ICONDIR)/192x192/apps/g213colors.png
 	-rm -f $(APPDIR)/g213colors.desktop
 	-rm -f $(POLKITDIR)/be.jeroened.pkexec.g213colors.policy
+	-udevadm control --reload-rules 2>/dev/null || true
 	-gtk-update-icon-cache -q $(ICONDIR)/ 2>/dev/null || true
 	-systemctl daemon-reload 2>/dev/null || true
-	@echo "Uninstallation complete. Note: User config files in ~/.config/G213Colors/ were not removed."
+	@echo "=== Uninstallation complete ==="
+	@echo "Note: User config files in ~/.config/G213Colors/ and autostart entries in ~/.config/autostart/ were not removed."

@@ -53,6 +53,46 @@ sudo python3 -m pip install randomcolor --break-system-packages
 sudo make install
 ```
 
+## Usage
+
+### GUI Mode (Recommended)
+Launch from application menu or terminal:
+```bash
+g213colors-gui
+```
+**No sudo required.** Settings are saved per-user in `~/.config/G213Colors/`.
+
+**Features:**
+- Select device (G213 or G203)
+- Choose effect: Static color, Cycle, Breathe, or Segments (G213 only)
+- Click "Set G213" / "Set G203" to apply and save
+- Enable "Apply user settings on login" to auto-restore colors on desktop login
+
+### CLI Mode
+```bash
+# Apply system-wide default config (requires sudo)
+sudo g213colors-gui -t
+
+# Apply user config for specific product
+g213colors-gui --apply-user-config G213
+g213colors-gui --apply-user-config G203
+
+# Show help
+g213colors-gui --help
+```
+
+### System Service
+```bash
+# Enable auto-start on boot
+sudo systemctl enable g213colors.service
+
+# Start immediately
+sudo systemctl start g213colors.service
+
+# Check status
+systemctl status g213colors.service
+```
+
 ## How it Works
 
 There are two main ways color settings are applied:

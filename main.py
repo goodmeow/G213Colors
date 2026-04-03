@@ -223,6 +223,9 @@ class Window(Gtk.Window):
         self.btn_refresh.set_sensitive(False)
         try:
             detected = G213Colors.LogitechDevice.detect_connected_devices()
+            if detected is None:
+                detected = {}
+
             if detected:
                 device_names = ", ".join(detected.keys())
                 status_msg = f"Devices found: {device_names}"
@@ -237,11 +240,12 @@ class Window(Gtk.Window):
 
             # Update Set buttons sensitivity based on detection
             for product in config_manager.SUPPORTED_PRODUCTS:
+                is_connected = product in detected
                 for child in self.get_children():
-                    self._update_button_sensitivity(child, product, product in detected)
+                    self._update_button_sensitivity(child, product, is_connected)
 
         except Exception as e:
-            logger.error(f"Error scanning devices: {e}")
+            logger.error(f"Error scanning devices: {e}", exc_info=True)
             context_id = self.status_bar.get_context_id("device-status")
             self.status_bar.push(context_id, f"Scan error: {e}")
         finally:
@@ -249,7 +253,8 @@ class Window(Gtk.Window):
 
     def _update_button_sensitivity(self, widget, product, is_connected):
         """Recursively update button sensitivity based on device detection."""
-        if isinstance(widget, Gtk.Button) and f"Set {product}" in widget.get_label():
+        label = widget.get_label() if hasattr(widget, 'get_label') else None
+        if label and f"Set {product}" in label:
             widget.set_sensitive(is_connected)
         elif hasattr(widget, 'get_children'):
             for child in widget.get_children():

@@ -26,10 +26,10 @@ install:
 	@echo "Creating udev rules for Logitech device permissions..."
 	@printf '%s\n' \
 		'# Logitech G213 Keyboard' \
-		'SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c336", MODE="0666"' \
+		'SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c336", TAG+="uaccess"' \
 		'' \
 		'# Logitech G203 Mouse' \
-		'SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c084", MODE="0666"' \
+		'SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c084", TAG+="uaccess"' \
 		| install -Dm644 /dev/stdin $(UDEVDIR)/99-logitech-usb-permissions.rules
 	@if [ ! -f $(SYSCONFDIR)/G213Colors.conf ]; then \
 		echo "Creating default system configuration at $(SYSCONFDIR)/G213Colors.conf..."; \

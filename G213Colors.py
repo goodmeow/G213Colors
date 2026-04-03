@@ -34,9 +34,73 @@ import binascii
 import logging
 import time
 import os
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# --- Input Validation Helpers ---
+
+def _validate_color_hex(color_hex: str) -> str:
+    """
+    Validate and normalize a hex color string.
+
+    Args:
+        color_hex: Color string like "ff0000" or "FF0000"
+
+    Returns:
+        Normalized lowercase hex string
+
+    Raises:
+        ValueError: If format is invalid
+    """
+    if not isinstance(color_hex, str):
+        raise ValueError(f"Color must be a string, got {type(color_hex).__name__}")
+    if not re.match(r'^[0-9a-fA-F]{6}$', color_hex):
+        raise ValueError(
+            f"Invalid color hex: '{color_hex}'. Must be exactly 6 hex digits (e.g., 'ff0000')."
+        )
+    return color_hex.lower()
+
+
+def _validate_field(field: int) -> int:
+    """
+    Validate a segment field number.
+
+    Args:
+        field: Field/segment number (0-255)
+
+    Returns:
+        Validated field number
+
+    Raises:
+        ValueError: If out of range
+    """
+    if not isinstance(field, int):
+        raise ValueError(f"Field must be an integer, got {type(field).__name__}")
+    if not (0 <= field <= 255):
+        raise ValueError(f"Invalid field: {field}. Must be between 0 and 255.")
+    return field
+
+
+def _validate_speed(speed: int) -> int:
+    """
+    Validate a speed value for breathe/cycle effects.
+
+    Args:
+        speed: Speed in milliseconds (500-65535)
+
+    Returns:
+        Validated speed value
+
+    Raises:
+        ValueError: If out of range
+    """
+    if not isinstance(speed, int):
+        raise ValueError(f"Speed must be an integer, got {type(speed).__name__}")
+    if not (500 <= speed <= 65535):
+        raise ValueError(f"Invalid speed: {speed}. Must be between 500 and 65535 ms.")
+    return speed
 
 class LogitechDevice:
     """Controls Logitech G213/G203 device LED colors via USB HID commands."""
@@ -230,14 +294,19 @@ class LogitechDevice:
     def send_color_command(self, color_hex: str, field: int = 0) -> bool:
         """
         Send a color command to the device.
-        
+
         Args:
             color_hex: Hex color string (e.g., "ff0000" for red)
             field: Segment/field number (0 for all zones)
-            
+
         Returns:
             True if command sent successfully
+
+        Raises:
+            ValueError: If color_hex or field is invalid
         """
+        color_hex = _validate_color_hex(color_hex)
+        field = _validate_field(field)
         command_string = self.spec["colorCommand"].format(str(format(field, '02x')), color_hex)
         if self._send_data(command_string):
             if self.spec["needs_receive_after_color"]:
@@ -248,27 +317,36 @@ class LogitechDevice:
     def send_breathe_command(self, color_hex: str, speed: int) -> bool:
         """
         Send a breathe effect command to the device.
-        
+
         Args:
             color_hex: Hex color string
             speed: Speed value (500-65535ms)
-            
+
         Returns:
             True if command sent successfully
+
+        Raises:
+            ValueError: If color_hex or speed is invalid
         """
+        color_hex = _validate_color_hex(color_hex)
+        speed = _validate_speed(speed)
         command_string = self.spec["breatheCommand"].format(color_hex, str(format(speed, '04x')))
         return self._send_data(command_string)
 
     def send_cycle_command(self, speed: int) -> bool:
         """
         Send a cycle effect command to the device.
-        
+
         Args:
             speed: Speed value (500-65535ms)
-            
+
         Returns:
             True if command sent successfully
+
+        Raises:
+            ValueError: If speed is invalid
         """
+        speed = _validate_speed(speed)
         command_string = self.spec["cycleCommand"].format(str(format(speed, '04x')))
         return self._send_data(command_string)
 

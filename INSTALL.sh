@@ -59,6 +59,10 @@ echo "Running make install..."
 make install
 
 echo ""
+echo "Note: USB device permissions now use logind session tracking (TAG+=uaccess)."
+echo "This means only the currently logged-in user can access the device — more secure than world-readable."
+
+echo ""
 echo "Installation complete!"
 echo "If your Logitech devices were already connected, you might need to unplug/replug them or reboot for udev rules to take effect."
 echo "Launch 'G213 Colors' from your application menu or run 'g213colors-gui' from terminal."

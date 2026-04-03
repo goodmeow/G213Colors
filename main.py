@@ -167,6 +167,21 @@ class Window(Gtk.Window):
             hBoxAutostartChecks.pack_start(checkbox, False, False, 0)
         vBoxMain.pack_start(hBoxAutostartChecks, False, False, 5)
 
+        # --- Device Status Bar ---
+        self.status_bar = Gtk.Statusbar()
+        self.status_bar.set_margin_top(5)
+        vBoxMain.pack_start(self.status_bar, False, False, 0)
+
+        # --- Refresh/Scan Button ---
+        hBoxActions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5, margin_top=5)
+        self.btn_refresh = Gtk.Button.new_with_label("⟳ Scan Devices")
+        self.btn_refresh.connect("clicked", self.on_scan_devices)
+        hBoxActions.pack_start(self.btn_refresh, False, False, 0)
+        vBoxMain.pack_start(hBoxActions, False, False, 0)
+
+        # Initial device scan
+        self.on_scan_devices(self.btn_refresh)
+
 
     def btnGetHex(self, btn: Gtk.ColorButton) -> str:
         """Convert Gtk.ColorButton RGBA to hex color string."""
@@ -202,6 +217,43 @@ class Window(Gtk.Window):
             if not success:
                 self._show_error_dialog(f"Error removing autostart for {product_name}", "Check logs for details.")
                 checkbox.set_active(True)
+
+    def on_scan_devices(self, button):
+        """Scan for connected Logitech devices and update status."""
+        self.btn_refresh.set_sensitive(False)
+        try:
+            detected = G213Colors.LogitechDevice.detect_connected_devices()
+            if detected:
+                device_names = ", ".join(detected.keys())
+                status_msg = f"Devices found: {device_names}"
+                logger.info(f"Detected devices: {device_names}")
+            else:
+                status_msg = "No Logitech G213/G203 devices detected"
+                logger.warning("No supported Logitech devices found")
+
+            context_id = self.status_bar.get_context_id("device-status")
+            self.status_bar.remove_all(context_id)
+            self.status_bar.push(context_id, status_msg)
+
+            # Update Set buttons sensitivity based on detection
+            for product in config_manager.SUPPORTED_PRODUCTS:
+                for child in self.get_children():
+                    self._update_button_sensitivity(child, product, product in detected)
+
+        except Exception as e:
+            logger.error(f"Error scanning devices: {e}")
+            context_id = self.status_bar.get_context_id("device-status")
+            self.status_bar.push(context_id, f"Scan error: {e}")
+        finally:
+            self.btn_refresh.set_sensitive(True)
+
+    def _update_button_sensitivity(self, widget, product, is_connected):
+        """Recursively update button sensitivity based on device detection."""
+        if isinstance(widget, Gtk.Button) and f"Set {product}" in widget.get_label():
+            widget.set_sensitive(is_connected)
+        elif hasattr(widget, 'get_children'):
+            for child in widget.get_children():
+                self._update_button_sensitivity(child, product, is_connected)
 
     def sendStatic(self, product: str):
         """Send static color command to the device."""

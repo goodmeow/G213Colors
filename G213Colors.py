@@ -22,20 +22,31 @@
   *  SOFTWARE.
 '''
 
+"""
+Logitech G213/G203 USB device control module.
+Provides functionality to control LED colors and effects on Logitech devices.
+"""
+
+from typing import Optional, List
 import usb.core
 import usb.util
 import binascii
 import logging
-import time # Added for sleep in apply_config_from_file
-import os # Added for path operations if needed within the class, though main.py will handle user paths
+import time
+import os
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 class LogitechDevice:
+    """Controls Logitech G213/G203 device LED colors via USB HID commands."""
+    
     ID_VENDOR = 0x046d
     USB_BM_REQUEST_TYPE = 0x21
     USB_BM_REQUEST = 0x09
     USB_W_INDEX = 0x0001
+    USB_READ_ENDPOINT = 0x82
+    USB_READ_TIMEOUT = 1000  # milliseconds
 
     PRODUCT_SPECS = {
         "G213": {
@@ -53,65 +64,113 @@ class LogitechDevice:
             "needs_receive_after_color": False
         }
     }
-    
+
     # System-wide default config file (for -t option)
     SYSTEM_DEFAULT_CONF_FILE = "/etc/G213Colors.conf"
 
-
-    def __init__(self, product_name):
+    def __init__(self, product_name: str):
+        """
+        Initialize a Logitech device instance.
+        
+        Args:
+            product_name: Device product name (e.g., "G213", "G203")
+            
+        Raises:
+            ValueError: If product_name is not supported
+        """
         if product_name not in self.PRODUCT_SPECS:
             raise ValueError(f"Unsupported product: {product_name}")
         self.product_name = product_name
         self.spec = self.PRODUCT_SPECS[product_name]
-        self.device = None
+        self.device: Optional[usb.core.Device] = None
         self.is_kernel_driver_detached = False
         logger.debug(f"LogitechDevice instance created for {self.product_name}")
 
-    # ... (connect, disconnect, _send_data, _receive_data methods remain the same as previously proposed) ...
-    def connect(self):
+    @classmethod
+    def detect_connected_devices(cls) -> dict:
+        """
+        Detect all connected supported Logitech devices.
+        
+        Returns:
+            Dictionary mapping product names to device instances
+        """
+        connected_devices = {}
+        for product_name, specs in cls.PRODUCT_SPECS.items():
+            try:
+                device = usb.core.find(idVendor=cls.ID_VENDOR, idProduct=specs["idProduct"])
+                if device is not None:
+                    connected_devices[product_name] = device
+                    logger.info(f"Detected {product_name} device")
+            except Exception as e:
+                logger.debug(f"Error detecting {product_name}: {e}")
+        return connected_devices
+
+    def connect(self, max_retries: int = 2) -> bool:
+        """
+        Connect to the USB device with retry mechanism for better error recovery.
+        
+        Args:
+            max_retries: Maximum number of connection retries
+            
+        Returns:
+            True if connection successful, False otherwise
+        """
         logger.info(f"Attempting to connect to: {self.product_name}")
-        try:
-            self.device = usb.core.find(idVendor=self.ID_VENDOR, idProduct=self.spec["idProduct"])
-            if self.device is None:
-                logger.error(f"USB device {self.product_name} not found!")
+        
+        for attempt in range(max_retries + 1):
+            try:
+                self.device = usb.core.find(idVendor=self.ID_VENDOR, idProduct=self.spec["idProduct"])
+                if self.device is None:
+                    if attempt < max_retries:
+                        logger.warning(f"USB device {self.product_name} not found, retrying ({attempt + 1}/{max_retries})...")
+                        time.sleep(0.5)
+                        continue
+                    logger.error(f"USB device {self.product_name} not found after {max_retries + 1} attempts!")
+                    return False
+
+                if self.device.is_kernel_driver_active(self.USB_W_INDEX):
+                    self.device.detach_kernel_driver(self.USB_W_INDEX)
+                    self.is_kernel_driver_detached = True
+                logger.info(f"Connected to {self.product_name} on attempt {attempt + 1}")
+                return True
+            except usb.core.USBError as e:
+                error_msg = str(e).lower()
+                if "access" in error_msg or "permission" in error_msg:
+                    logger.error(f"Permission denied for {self.product_name}. Ensure udev rules are set.")
+                    self.device = None
+                    return False
+                
+                if attempt < max_retries:
+                    logger.warning(f"USBError during connect for {self.product_name}: {e}. Retrying ({attempt + 1}/{max_retries})...")
+                    time.sleep(0.5)
+                    continue
+                logger.error(f"USBError during connect for {self.product_name} after retries: {e}")
+                self.device = None
                 return False
+            except Exception as e:
+                logger.error(f"Unexpected error during connect for {self.product_name}: {e}")
+                self.device = None
+                return False
+        
+        return False
 
-            if self.device.is_kernel_driver_active(self.USB_W_INDEX):
-                self.device.detach_kernel_driver(self.USB_W_INDEX)
-                self.is_kernel_driver_detached = True
-            logger.info(f"Connected to {self.product_name}")
-            return True
-        except usb.core.USBError as e:
-            logger.error(f"USBError during connect for {self.product_name}: {e}")
-            if "access" in str(e).lower() or "permission" in str(e).lower():
-                logger.error("This might be a permissions issue. Ensure udev rules are set or run with sufficient privileges if not using the GUI's Polkit method.")
-            self.device = None
-            return False
-        except Exception as e:
-            logger.error(f"Unexpected error during connect for {self.product_name}: {e}")
-            self.device = None
-            return False
-
-    def disconnect(self):
+    def disconnect(self) -> None:
+        """Safely disconnect from the USB device and reattach kernel driver if needed."""
         if not self.device:
-            # logger.warning(f"Disconnect called for {self.product_name}, but no device was connected or connection failed.")
-            return # It's okay if disconnect is called without active device
+            return
 
         logger.info(f"Disconnecting from {self.product_name}")
         try:
             usb.util.dispose_resources(self.device)
             if self.is_kernel_driver_detached:
-                # Re-finding explicitly to attach is safer if device handle got invalidated by dispose.
-                # However, attach_kernel_driver is a method of the device object itself.
-                # For robustness, let's try to re-find, but have a fallback.
                 try:
                     temp_device_for_attach = usb.core.find(idVendor=self.ID_VENDOR, idProduct=self.spec["idProduct"])
                     if temp_device_for_attach:
                         logger.info(f"Reattaching kernel driver for {self.product_name} (using re-found device instance)")
                         temp_device_for_attach.attach_kernel_driver(self.USB_W_INDEX)
-                    else: # Fallback if not re-found (e.g. device unplugged right after dispose)
+                    else:
                          logger.warning(f"Could not re-find {self.product_name} to reattach kernel driver. Attempting with stored device handle.")
-                         self.device.attach_kernel_driver(self.USB_W_INDEX) # Try with original handle
+                         self.device.attach_kernel_driver(self.USB_W_INDEX)
                 except usb.core.USBError as attach_err:
                      logger.error(f"USBError reattaching kernel driver (re-find attempt) for {self.product_name}: {attach_err}")
                 self.is_kernel_driver_detached = False
@@ -122,7 +181,16 @@ class LogitechDevice:
         finally:
             self.device = None
 
-    def _send_data(self, data_hex_string):
+    def _send_data(self, data_hex_string: str) -> bool:
+        """
+        Send data to the USB device.
+        
+        Args:
+            data_hex_string: Hex string data to send
+            
+        Returns:
+            True if send successful, False otherwise
+        """
         if not self.device:
             logger.error(f"Cannot send data to {self.product_name}, device not connected.")
             return False
@@ -138,12 +206,18 @@ class LogitechDevice:
             logger.error(f"USBError sending data to {self.product_name}: {e}")
             return False
 
-    def _receive_data(self):
+    def _receive_data(self) -> Optional[bytes]:
+        """
+        Receive data from the USB device.
+        
+        Returns:
+            Received data bytes or None if receive failed/timed out
+        """
         if not self.device:
             logger.error(f"Cannot receive data from {self.product_name}, device not connected.")
             return None
         try:
-            data = self.device.read(0x82, 64, timeout=100) 
+            data = self.device.read(self.USB_READ_ENDPOINT, 64, timeout=self.USB_READ_TIMEOUT)
             logger.debug(f"Received data from {self.product_name}: {binascii.hexlify(data)}")
             return data
         except usb.core.USBError as e:
@@ -153,7 +227,17 @@ class LogitechDevice:
             logger.error(f"USBError receiving data from {self.product_name}: {e}")
             return None
 
-    def send_color_command(self, color_hex, field=0):
+    def send_color_command(self, color_hex: str, field: int = 0) -> bool:
+        """
+        Send a color command to the device.
+        
+        Args:
+            color_hex: Hex color string (e.g., "ff0000" for red)
+            field: Segment/field number (0 for all zones)
+            
+        Returns:
+            True if command sent successfully
+        """
         command_string = self.spec["colorCommand"].format(str(format(field, '02x')), color_hex)
         if self._send_data(command_string):
             if self.spec["needs_receive_after_color"]:
@@ -161,38 +245,72 @@ class LogitechDevice:
             return True
         return False
 
-    def send_breathe_command(self, color_hex, speed):
+    def send_breathe_command(self, color_hex: str, speed: int) -> bool:
+        """
+        Send a breathe effect command to the device.
+        
+        Args:
+            color_hex: Hex color string
+            speed: Speed value (500-65535ms)
+            
+        Returns:
+            True if command sent successfully
+        """
         command_string = self.spec["breatheCommand"].format(color_hex, str(format(speed, '04x')))
         return self._send_data(command_string)
 
-    def send_cycle_command(self, speed):
+    def send_cycle_command(self, speed: int) -> bool:
+        """
+        Send a cycle effect command to the device.
+        
+        Args:
+            speed: Speed value (500-65535ms)
+            
+        Returns:
+            True if command sent successfully
+        """
         command_string = self.spec["cycleCommand"].format(str(format(speed, '04x')))
         return self._send_data(command_string)
 
-    def save_configuration(self, command_data_string, file_path):
-        """Saves the product name and provided command string(s) to the specified file path."""
+    def save_configuration(self, command_data_string: str, file_path: str) -> bool:
+        """
+        Save the product name and provided command string(s) to the specified file path.
+        
+        Args:
+            command_data_string: Command data to save (can be multiple commands separated by newlines)
+            file_path: Path to save the configuration file
+            
+        Returns:
+            True if save successful, False otherwise
+        """
         logger.info(f"Saving configuration for {self.product_name} to {file_path}")
-        # command_data_string can be a single command or multiple commands separated by newlines
         try:
-            # Ensure directory exists (useful for user-specific paths)
             dir_name = os.path.dirname(file_path)
-            if dir_name: # Check if dir_name is not empty (e.g. for relative paths in current dir)
-                 os.makedirs(dir_name, exist_ok=True)
+            if dir_name:
+                 Path(dir_name).mkdir(parents=True, exist_ok=True)
 
             with open(file_path, "w") as f:
-                f.write(f"PRODUCT={self.product_name}\n") # Save product name first
-                f.write(command_data_string) # Save the command(s)
+                f.write(f"PRODUCT={self.product_name}\n")
+                f.write(command_data_string)
             logger.info(f"Configuration saved successfully to {file_path}.")
             return True
-        except (IOError, OSError, PermissionError) as e: # Catch OSError for makedirs
+        except (IOError, OSError, PermissionError) as e:
             logger.error(f"Failed to save configuration to {file_path}: {e}")
             if isinstance(e, PermissionError):
                 logger.error("This is a permission error. Ensure the application has rights to write to this file.")
             return False
 
     @classmethod
-    def apply_configuration_from_file(cls, conf_file_path):
-        """Loads configuration from a file, determines product, and applies settings."""
+    def apply_configuration_from_file(cls, conf_file_path: str) -> bool:
+        """
+        Load configuration from a file, determine product, and apply settings.
+        
+        Args:
+            conf_file_path: Path to the configuration file
+            
+        Returns:
+            True if settings applied successfully, False otherwise
+        """
         logger.info(f"Attempting to apply settings from configuration file: {conf_file_path}")
         try:
             with open(conf_file_path, "r") as file:
@@ -200,7 +318,7 @@ class LogitechDevice:
                 if not first_line.startswith("PRODUCT="):
                     logger.error(f"Invalid config file format in {conf_file_path}. Missing PRODUCT line.")
                     return False
-                
+
                 product_name_from_file = first_line.split("=", 1)[1]
                 logger.info(f"Product identified in config file: {product_name_from_file}")
 
@@ -208,10 +326,10 @@ class LogitechDevice:
 
             if not commands_to_apply:
                 logger.warning(f"No commands found in {conf_file_path} for product {product_name_from_file}.")
-                return True # No commands to apply, but not an error per se
+                return True
 
-            device_instance = cls(product_name_from_file) # Create instance of the correct product
-            
+            device_instance = cls(product_name_from_file)
+
             if not device_instance.connect():
                 logger.error(f"Could not connect to {product_name_from_file} to apply settings.")
                 return False
@@ -222,12 +340,12 @@ class LogitechDevice:
                 if device_instance._send_data(cmd_data):
                     if device_instance.spec["needs_receive_after_color"]:
                          device_instance._receive_data()
-                    time.sleep(0.01) # Original sleep
+                    time.sleep(0.01)
                 else:
                     logger.error(f"Failed to send command: {cmd_data} to {product_name_from_file}")
                     success = False
-                    break # Stop on first error
-            
+                    break
+
             device_instance.disconnect()
             if success:
                 logger.info(f"Finished applying settings from {conf_file_path} for {product_name_from_file}.")
@@ -237,13 +355,13 @@ class LogitechDevice:
 
         except FileNotFoundError:
             logger.warning(f"Configuration file {conf_file_path} not found. Cannot apply settings.")
-            return False # Indicate failure to apply
-        except ValueError as e: # Catches unsupported product from cls(product_name_from_file)
+            return False
+        except ValueError as e:
             logger.error(f"Error processing configuration file {conf_file_path}: {e}")
             return False
         except (IOError, PermissionError) as e:
             logger.error(f"Error reading configuration file {conf_file_path}: {e}")
             return False
-        except Exception as e: # Catch any other unexpected errors
+        except Exception as e:
             logger.error(f"Unexpected error applying settings from file {conf_file_path}: {e}")
             return False

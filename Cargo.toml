@@ -10,7 +10,14 @@ description = "Rust/Iced Logitech G213 lighting controller"
 clap = { version = "4.5", features = ["derive"] }
 dirs = "6.0"
 hex = "0.4"
-iced = "0.14.0"
+iced = { version = "0.14.0", default-features = false, features = [
+    "crisp",
+    "linux-theme-detection",
+    "thread-pool",
+    "tiny-skia",
+    "web-colors",
+    "x11",
+] }
 rusb = "0.9.4"
 thiserror = "2.0"
 

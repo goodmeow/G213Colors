@@ -3,11 +3,15 @@ Description=Start G213Colors profile
 After=suspend.target
 After=hibernate.target
 After=hybrid-sleep.target
+StartLimitIntervalSec=30
+StartLimitBurst=5
 
 
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/g213colors -t
+Restart=on-failure
+RestartSec=2
 
 [Install]
 WantedBy=multi-user.target

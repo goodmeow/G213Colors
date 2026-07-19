@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use rusb::{DeviceHandle, GlobalContext};
 
-use crate::command::{commands_for_effect, Effect};
+use crate::command::{commands_for_effect, validate_command_for_spec, Effect};
 use crate::config::{read_config, save_user_config};
 use crate::error::{G213Error, Result};
 use crate::product::{spec_for, DeviceSpec, Product};
@@ -45,6 +45,7 @@ pub fn apply_config_file(path: impl AsRef<std::path::Path>) -> Result<()> {
 pub fn apply_commands(spec: &DeviceSpec, commands: &[String]) -> Result<()> {
     let mut session = DeviceSession::connect(spec)?;
     for command in commands {
+        validate_command_for_spec(spec, command)?;
         let expects_receive = command_expects_receive(spec, command)?;
         session.send_hex(command)?;
         if expects_receive {
@@ -74,8 +75,20 @@ struct DeviceSession<'a> {
 
 impl<'a> DeviceSession<'a> {
     fn connect(spec: &'a DeviceSpec) -> Result<Self> {
-        let handle = rusb::open_device_with_vid_pid(spec.vendor_id, spec.product_id)
-            .ok_or_else(|| G213Error::DeviceNotFound(spec.product.to_string()))?;
+        let devices = rusb::devices()?;
+        let Some(handle) = devices.iter().find_map(|device| {
+            let descriptor = device.device_descriptor().ok()?;
+            if descriptor.vendor_id() == spec.vendor_id
+                && descriptor.product_id() == spec.product_id
+            {
+                Some(device.open())
+            } else {
+                None
+            }
+        }) else {
+            return Err(G213Error::DeviceNotFound(spec.product.to_string()));
+        };
+        let handle = handle?;
 
         let mut kernel_driver_detached = false;
         match handle.kernel_driver_active(USB_INTERFACE) {

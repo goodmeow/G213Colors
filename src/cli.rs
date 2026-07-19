@@ -1,9 +1,9 @@
 use clap::{Parser, Subcommand};
 
-use crate::command::{segment_command, Effect, Rgb};
-use crate::config::{self, save_user_config, user_config_path};
+use crate::command::{segment_commands_with_update, Effect, Rgb};
+use crate::config::{self, read_config, save_user_config, user_config_path};
 use crate::device;
-use crate::error::Result;
+use crate::error::{G213Error, Result};
 use crate::product::{spec_for, Product};
 
 pub fn has_cli_args() -> bool {
@@ -14,9 +14,11 @@ pub fn has_cli_args() -> bool {
 #[command(name = "g213colors")]
 #[command(about = "Logitech G213 lighting controller")]
 struct Cli {
+    /// Apply the system-wide startup profile from /etc/G213Colors.conf.
     #[arg(short = 't', long = "apply-system-default")]
     apply_system_default: bool,
 
+    /// Apply this user's saved profile, defaulting to G213 when omitted.
     #[arg(long, num_args = 0..=1, default_missing_value = "G213")]
     apply_user_config: Option<Product>,
 
@@ -26,10 +28,15 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Print whether a supported G213 keyboard is connected.
     Detect,
+    /// Apply and save one static color, formatted as RRGGBB hex.
     SetStatic { color: String },
+    /// Apply and save a breathing color with speed in milliseconds.
     SetBreathe { color: String, speed_ms: u32 },
+    /// Apply and save a hardware color cycle speed in milliseconds.
     SetCycle { speed_ms: u32 },
+    /// Apply one segment color and save a full segment profile.
     SetSegment { segment: u8, color: String },
 }
 
@@ -73,7 +80,9 @@ pub fn run() -> Result<()> {
         Some(Command::SetSegment { segment, color }) => {
             let color = Rgb::parse_hex(&color)?;
             let spec = spec_for(Product::G213);
-            let commands = vec![segment_command(spec, segment, color)?];
+            let existing_commands = existing_user_commands(Product::G213)?;
+            let commands =
+                segment_commands_with_update(spec, existing_commands.as_deref(), segment, color)?;
             device::apply_commands(spec, &commands)?;
             save_user_config(Product::G213, &commands)?;
             println!("Applied G213 segment {segment} color.");
@@ -84,4 +93,13 @@ pub fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn existing_user_commands(product: Product) -> Result<Option<Vec<String>>> {
+    let path = user_config_path(product)?;
+    match read_config(path) {
+        Ok(config) => Ok(Some(config.commands)),
+        Err(G213Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }

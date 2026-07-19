@@ -76,6 +76,7 @@ struct G213App {
     segment_colors: [Rgb; 5],
     connected_g213: bool,
     autostart_enabled: bool,
+    autostart_busy: bool,
     busy: bool,
     status: String,
 }
@@ -97,6 +98,7 @@ impl G213App {
                 segment_colors: [Rgb::WHITE; 5],
                 connected_g213: false,
                 autostart_enabled: config::is_autostart_enabled(Product::G213),
+                autostart_busy: false,
                 busy: true,
                 status,
             },
@@ -201,7 +203,12 @@ impl G213App {
                 Task::none()
             }
             Message::AutostartToggled(enabled) => {
+                if self.autostart_busy {
+                    return Task::none();
+                }
+
                 self.autostart_enabled = enabled;
+                self.autostart_busy = true;
                 self.status = if enabled {
                     "Creating G213 autostart entry...".to_string()
                 } else {
@@ -220,6 +227,7 @@ impl G213App {
                 )
             }
             Message::AutostartFinished(enabled, result) => {
+                self.autostart_busy = false;
                 match result {
                     Ok(()) => {
                         self.autostart_enabled = enabled;
@@ -281,9 +289,12 @@ impl G213App {
             EffectTab::Segments => self.segment_controls(),
         };
 
-        let autostart = checkbox(self.autostart_enabled)
-            .label("Apply user settings on login")
-            .on_toggle(Message::AutostartToggled);
+        let autostart = checkbox(self.autostart_enabled).label("Apply user settings on login");
+        let autostart = if self.autostart_busy {
+            autostart
+        } else {
+            autostart.on_toggle(Message::AutostartToggled)
+        };
 
         container(
             column![

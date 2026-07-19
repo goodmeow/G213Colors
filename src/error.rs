@@ -14,6 +14,12 @@ pub enum G213Error {
     #[error("invalid segment {segment}. Must be between 1 and {max}")]
     InvalidSegment { segment: u8, max: u8 },
 
+    #[error("invalid command '{command}': {reason}")]
+    InvalidCommand {
+        command: String,
+        reason: &'static str,
+    },
+
     #[error("configuration file {0} is missing PRODUCT= header")]
     MissingProductHeader(PathBuf),
 

@@ -34,7 +34,7 @@ install:
 	@echo "Creating udev rules for Logitech device permissions..."
 	@printf '%s\n' \
 		'# Logitech G213 Keyboard' \
-		'SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c336", TAG+="uaccess"' \
+		'SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c336", GROUP="input", MODE="0660", TAG+="uaccess"' \
 		'' \
 		| install -Dm644 /dev/stdin $(UDEVDIR)/99-logitech-usb-permissions.rules
 	@if [ ! -f $(SYSCONFDIR)/G213Colors.conf ]; then \

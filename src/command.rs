@@ -94,10 +94,140 @@ pub fn commands_for_effect(spec: &DeviceSpec, effect: &Effect) -> Result<Vec<Str
     }
 }
 
+pub fn validate_command_for_spec(spec: &DeviceSpec, command: &str) -> Result<()> {
+    if command.is_empty() {
+        return Err(invalid_command(command, "command is empty"));
+    }
+
+    if command.len() % 2 != 0 || !command.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(invalid_command(command, "command must be even-length hex"));
+    }
+
+    let templates = [spec.color_command, spec.breathe_command, spec.cycle_command];
+    for template in templates {
+        if command_matches_template(spec, command, template)? {
+            return Ok(());
+        }
+    }
+
+    Err(invalid_command(command, "unsupported command form"))
+}
+
+pub fn segment_commands_with_update(
+    spec: &DeviceSpec,
+    existing_commands: Option<&[String]>,
+    segment: u8,
+    color: Rgb,
+) -> Result<Vec<String>> {
+    validate_segment(spec, segment)?;
+    let mut colors = existing_commands
+        .and_then(|commands| segment_colors_from_commands(spec, commands))
+        .unwrap_or([Rgb::WHITE; 5]);
+    colors[usize::from(segment - 1)] = color;
+    commands_for_effect(spec, &Effect::Segments(colors))
+}
+
 fn color_command(spec: &DeviceSpec, field: u8, color: Rgb) -> String {
     spec.color_command
         .replace("{field}", &format!("{field:02x}"))
         .replace("{color}", &color.to_hex())
+}
+
+fn command_matches_template(spec: &DeviceSpec, command: &str, template: &str) -> Result<bool> {
+    let mut command_index = 0;
+    let mut template_index = 0;
+
+    while template_index < template.len() {
+        let rest = &template[template_index..];
+        if rest.starts_with("{field}") {
+            let Some(value) = parse_command_hex(command, command_index, 2) else {
+                return Ok(false);
+            };
+            if value > u32::from(spec.zone_count()) {
+                return Ok(false);
+            }
+            command_index += 2;
+            template_index += "{field}".len();
+        } else if rest.starts_with("{color}") {
+            if command_index + 6 > command.len() {
+                return Ok(false);
+            }
+            command_index += 6;
+            template_index += "{color}".len();
+        } else if rest.starts_with("{speed}") {
+            let Some(value) = parse_command_hex(command, command_index, 4) else {
+                return Ok(false);
+            };
+            validate_speed(value)?;
+            command_index += 4;
+            template_index += "{speed}".len();
+        } else {
+            if command_index >= command.len() {
+                return Ok(false);
+            }
+
+            let expected = template.as_bytes()[template_index];
+            let actual = command.as_bytes()[command_index];
+            if !actual.eq_ignore_ascii_case(&expected) {
+                return Ok(false);
+            }
+            command_index += 1;
+            template_index += 1;
+        }
+    }
+
+    Ok(command_index == command.len())
+}
+
+fn segment_colors_from_commands(spec: &DeviceSpec, commands: &[String]) -> Option<[Rgb; 5]> {
+    let mut colors = [Rgb::WHITE; 5];
+    let prefix = spec
+        .color_command
+        .split("{field}")
+        .next()?
+        .to_ascii_lowercase();
+    let mut found_segment = false;
+
+    for command in commands {
+        validate_command_for_spec(spec, command).ok()?;
+        let command = command.to_ascii_lowercase();
+        if !command.starts_with(&prefix) {
+            continue;
+        }
+
+        let field_start = prefix.len();
+        let field = parse_command_hex(&command, field_start, 2)? as u8;
+        if !(1..=spec.zone_count()).contains(&field) {
+            continue;
+        }
+
+        let mode_start = field_start + 2;
+        if !command[mode_start..].starts_with("01") {
+            continue;
+        }
+
+        let color_start = mode_start + 2;
+        let red = parse_command_hex(&command, color_start, 2)? as u8;
+        let green = parse_command_hex(&command, color_start + 2, 2)? as u8;
+        let blue = parse_command_hex(&command, color_start + 4, 2)? as u8;
+        colors[usize::from(field - 1)] = Rgb { red, green, blue };
+        found_segment = true;
+    }
+
+    found_segment.then_some(colors)
+}
+
+fn parse_command_hex(command: &str, start: usize, width: usize) -> Option<u32> {
+    let end = start.checked_add(width)?;
+    let value = command.get(start..end)?;
+    u32::from_str_radix(value, 16).ok()
+}
+
+fn invalid_command(command: &str, reason: &'static str) -> G213Error {
+    G213Error::InvalidCommand {
+        command: command.to_string(),
+        reason,
+    }
 }
 
 #[cfg(test)]
@@ -158,5 +288,64 @@ mod tests {
             "11ff0c3a05011234560200000000000000000000"
         );
         assert!(segment_command(&G213_SPEC, 6, Rgb::WHITE).is_err());
+    }
+
+    #[test]
+    fn validates_only_supported_command_forms() {
+        assert!(
+            validate_command_for_spec(&G213_SPEC, "11ff0c3a0001ffffff0200000000000000000000")
+                .is_ok()
+        );
+        assert!(validate_command_for_spec(&G213_SPEC, "00").is_err());
+        assert!(
+            validate_command_for_spec(&G213_SPEC, "11ff0c3a00010102030405060708090a0b0c0d")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn segment_update_preserves_existing_segment_colors() {
+        let existing = commands_for_effect(
+            &G213_SPEC,
+            &Effect::Segments([
+                Rgb::parse_hex("111111").unwrap(),
+                Rgb::parse_hex("222222").unwrap(),
+                Rgb::parse_hex("333333").unwrap(),
+                Rgb::parse_hex("444444").unwrap(),
+                Rgb::parse_hex("555555").unwrap(),
+            ]),
+        )
+        .unwrap();
+
+        let commands = segment_commands_with_update(
+            &G213_SPEC,
+            Some(&existing),
+            3,
+            Rgb::parse_hex("abcdef").unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(commands.len(), 5);
+        assert_eq!(commands[0], "11ff0c3a01011111110200000000000000000000");
+        assert_eq!(commands[2], "11ff0c3a0301abcdef0200000000000000000000");
+        assert_eq!(commands[4], "11ff0c3a05015555550200000000000000000000");
+    }
+
+    #[test]
+    fn segment_update_preserves_partial_uppercase_segment_config() {
+        let existing = vec!["11FF0C3A02012222220200000000000000000000".to_string()];
+
+        let commands = segment_commands_with_update(
+            &G213_SPEC,
+            Some(&existing),
+            3,
+            Rgb::parse_hex("abcdef").unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(commands.len(), 5);
+        assert_eq!(commands[0], "11ff0c3a0101ffffff0200000000000000000000");
+        assert_eq!(commands[1], "11ff0c3a02012222220200000000000000000000");
+        assert_eq!(commands[2], "11ff0c3a0301abcdef0200000000000000000000");
     }
 }

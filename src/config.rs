@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+use crate::command::validate_command_for_spec;
 use crate::error::{G213Error, Result};
 use crate::product::{spec_by_key, Product};
 
@@ -78,6 +79,10 @@ pub fn parse_config(contents: &str, path: &Path) -> Result<DeviceConfig> {
 
     if commands.is_empty() {
         return Err(G213Error::EmptyConfig(path.to_path_buf()));
+    }
+
+    for command in &commands {
+        validate_command_for_spec(spec, command)?;
     }
 
     Ok(DeviceConfig {

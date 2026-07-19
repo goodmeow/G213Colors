@@ -42,6 +42,13 @@ pub enum Effect {
     Segments([Rgb; 5]),
 }
 
+#[derive(Default)]
+struct CommandCaptures {
+    field: Option<u32>,
+    color: Option<Rgb>,
+    speed_ms: Option<u32>,
+}
+
 pub fn validate_speed(speed_ms: u32) -> Result<u32> {
     if !(500..=65_535).contains(&speed_ms) {
         return Err(G213Error::InvalidSpeed(speed_ms));
@@ -113,6 +120,42 @@ pub fn validate_command_for_spec(spec: &DeviceSpec, command: &str) -> Result<()>
     Err(invalid_command(command, "unsupported command form"))
 }
 
+pub fn effect_from_commands(spec: &DeviceSpec, commands: &[String]) -> Result<Option<Effect>> {
+    if commands.is_empty() {
+        return Ok(None);
+    }
+
+    for command in commands {
+        validate_command_for_spec(spec, command)?;
+    }
+
+    if commands.len() == 1 {
+        let command = &commands[0];
+
+        if let Some(captures) = capture_command_template(spec, command, spec.color_command)? {
+            if captures.field == Some(0) {
+                if let Some(color) = captures.color {
+                    return Ok(Some(Effect::Static(color)));
+                }
+            }
+        }
+
+        if let Some(captures) = capture_command_template(spec, command, spec.breathe_command)? {
+            if let (Some(color), Some(speed_ms)) = (captures.color, captures.speed_ms) {
+                return Ok(Some(Effect::Breathe { color, speed_ms }));
+            }
+        }
+
+        if let Some(captures) = capture_command_template(spec, command, spec.cycle_command)? {
+            if let Some(speed_ms) = captures.speed_ms {
+                return Ok(Some(Effect::Cycle { speed_ms }));
+            }
+        }
+    }
+
+    Ok(segment_colors_from_commands(spec, commands).map(Effect::Segments))
+}
+
 pub fn segment_commands_with_update(
     spec: &DeviceSpec,
     existing_commands: Option<&[String]>,
@@ -134,49 +177,64 @@ fn color_command(spec: &DeviceSpec, field: u8, color: Rgb) -> String {
 }
 
 fn command_matches_template(spec: &DeviceSpec, command: &str, template: &str) -> Result<bool> {
+    Ok(capture_command_template(spec, command, template)?.is_some())
+}
+
+fn capture_command_template(
+    spec: &DeviceSpec,
+    command: &str,
+    template: &str,
+) -> Result<Option<CommandCaptures>> {
     let mut command_index = 0;
     let mut template_index = 0;
+    let mut captures = CommandCaptures::default();
 
     while template_index < template.len() {
         let rest = &template[template_index..];
         if rest.starts_with("{field}") {
             let Some(value) = parse_command_hex(command, command_index, 2) else {
-                return Ok(false);
+                return Ok(None);
             };
             if value > u32::from(spec.zone_count()) {
-                return Ok(false);
+                return Ok(None);
             }
+            captures.field = Some(value);
             command_index += 2;
             template_index += "{field}".len();
         } else if rest.starts_with("{color}") {
-            if command_index + 6 > command.len() {
-                return Ok(false);
-            }
+            let Some(value) = command.get(command_index..command_index + 6) else {
+                return Ok(None);
+            };
+            let Ok(color) = Rgb::parse_hex(value) else {
+                return Ok(None);
+            };
+            captures.color = Some(color);
             command_index += 6;
             template_index += "{color}".len();
         } else if rest.starts_with("{speed}") {
             let Some(value) = parse_command_hex(command, command_index, 4) else {
-                return Ok(false);
+                return Ok(None);
             };
             validate_speed(value)?;
+            captures.speed_ms = Some(value);
             command_index += 4;
             template_index += "{speed}".len();
         } else {
             if command_index >= command.len() {
-                return Ok(false);
+                return Ok(None);
             }
 
             let expected = template.as_bytes()[template_index];
             let actual = command.as_bytes()[command_index];
             if !actual.eq_ignore_ascii_case(&expected) {
-                return Ok(false);
+                return Ok(None);
             }
             command_index += 1;
             template_index += 1;
         }
     }
 
-    Ok(command_index == command.len())
+    Ok((command_index == command.len()).then_some(captures))
 }
 
 fn segment_colors_from_commands(spec: &DeviceSpec, commands: &[String]) -> Option<[Rgb; 5]> {
@@ -304,6 +362,50 @@ mod tests {
     }
 
     #[test]
+    fn restores_static_effect_from_saved_command() {
+        let commands = commands_for_effect(
+            &G213_SPEC,
+            &Effect::Static(Rgb::parse_hex("12ab34").unwrap()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            effect_from_commands(&G213_SPEC, &commands).unwrap(),
+            Some(Effect::Static(Rgb::parse_hex("12ab34").unwrap()))
+        );
+    }
+
+    #[test]
+    fn restores_breathe_effect_from_saved_command() {
+        let commands = commands_for_effect(
+            &G213_SPEC,
+            &Effect::Breathe {
+                color: Rgb::parse_hex("00ff00").unwrap(),
+                speed_ms: 5000,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            effect_from_commands(&G213_SPEC, &commands).unwrap(),
+            Some(Effect::Breathe {
+                color: Rgb::parse_hex("00ff00").unwrap(),
+                speed_ms: 5000,
+            })
+        );
+    }
+
+    #[test]
+    fn restores_cycle_effect_from_saved_command() {
+        let commands = commands_for_effect(&G213_SPEC, &Effect::Cycle { speed_ms: 5000 }).unwrap();
+
+        assert_eq!(
+            effect_from_commands(&G213_SPEC, &commands).unwrap(),
+            Some(Effect::Cycle { speed_ms: 5000 })
+        );
+    }
+
+    #[test]
     fn segment_update_preserves_existing_segment_colors() {
         let existing = commands_for_effect(
             &G213_SPEC,
@@ -347,5 +449,22 @@ mod tests {
         assert_eq!(commands[0], "11ff0c3a0101ffffff0200000000000000000000");
         assert_eq!(commands[1], "11ff0c3a02012222220200000000000000000000");
         assert_eq!(commands[2], "11ff0c3a0301abcdef0200000000000000000000");
+    }
+
+    #[test]
+    fn restores_segment_effect_from_saved_commands() {
+        let colors = [
+            Rgb::parse_hex("111111").unwrap(),
+            Rgb::parse_hex("222222").unwrap(),
+            Rgb::parse_hex("333333").unwrap(),
+            Rgb::parse_hex("444444").unwrap(),
+            Rgb::parse_hex("555555").unwrap(),
+        ];
+        let commands = commands_for_effect(&G213_SPEC, &Effect::Segments(colors)).unwrap();
+
+        assert_eq!(
+            effect_from_commands(&G213_SPEC, &commands).unwrap(),
+            Some(Effect::Segments(colors))
+        );
     }
 }

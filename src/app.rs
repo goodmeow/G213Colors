@@ -3,9 +3,10 @@ use std::fmt;
 use iced::widget::{button, checkbox, column, container, pick_list, row, rule, slider, text};
 use iced::{Element, Length, Task};
 
-use crate::command::{Effect, Rgb};
+use crate::command::{effect_from_commands, Effect, Rgb};
 use crate::config;
 use crate::device;
+use crate::error::G213Error;
 use crate::product::Product;
 
 const APP_TITLE: &str = "G213 Colors";
@@ -63,6 +64,7 @@ enum Message {
     ScanFinished(bool),
     ApplyPressed,
     ApplyFinished(std::result::Result<(), String>),
+    RestoreFinished(std::result::Result<(), String>),
     AutostartToggled(bool),
     AutostartFinished(bool, std::result::Result<(), String>),
 }
@@ -79,29 +81,48 @@ struct G213App {
     autostart_busy: bool,
     busy: bool,
     status: String,
+    startup_restore_effect: Option<Effect>,
 }
 
 impl G213App {
     fn new() -> (Self, Task<Message>) {
-        let status = match config::ensure_user_dirs() {
+        let config_ready = config::ensure_user_dirs();
+        let status = match &config_ready {
             Ok(()) => "Ready. Scan G213 to begin.".to_string(),
             Err(error) => format!("Config directory warning: {error}"),
         };
 
+        let mut app = Self {
+            selected_effect: EffectTab::Static,
+            static_color: Rgb::WHITE,
+            breathe_color: Rgb::WHITE,
+            cycle_speed_ms: 5000,
+            breathe_speed_ms: 5000,
+            segment_colors: [Rgb::WHITE; 5],
+            connected_g213: false,
+            autostart_enabled: config::is_autostart_enabled(Product::G213),
+            autostart_busy: false,
+            busy: true,
+            status,
+            startup_restore_effect: None,
+        };
+
+        if config_ready.is_ok() {
+            match load_saved_effect() {
+                Ok(Some(effect)) => {
+                    app.set_effect(effect.clone());
+                    app.startup_restore_effect = Some(effect);
+                    app.status = "Loaded saved G213 settings. Scanning for G213...".to_string();
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    app.status = format!("Saved settings warning: {error}");
+                }
+            }
+        }
+
         (
-            Self {
-                selected_effect: EffectTab::Static,
-                static_color: Rgb::WHITE,
-                breathe_color: Rgb::WHITE,
-                cycle_speed_ms: 5000,
-                breathe_speed_ms: 5000,
-                segment_colors: [Rgb::WHITE; 5],
-                connected_g213: false,
-                autostart_enabled: config::is_autostart_enabled(Product::G213),
-                autostart_busy: false,
-                busy: true,
-                status,
-            },
+            app,
             Task::perform(
                 async { device::detect(Product::G213) },
                 Message::ScanFinished,
@@ -170,6 +191,20 @@ impl G213App {
             Message::ScanFinished(found) => {
                 self.busy = false;
                 self.connected_g213 = found;
+                if found {
+                    if let Some(effect) = self.startup_restore_effect.take() {
+                        self.busy = true;
+                        self.status = "Restoring saved G213 settings...".to_string();
+                        return Task::perform(
+                            async move {
+                                device::apply_effect(Product::G213, &effect)
+                                    .map_err(|error| error.to_string())
+                            },
+                            Message::RestoreFinished,
+                        );
+                    }
+                }
+
                 self.status = if found {
                     "G213 detected.".to_string()
                 } else {
@@ -199,6 +234,14 @@ impl G213App {
                 self.status = match result {
                     Ok(()) => "G213 settings applied and saved.".to_string(),
                     Err(error) => format!("Apply failed: {error}"),
+                };
+                Task::none()
+            }
+            Message::RestoreFinished(result) => {
+                self.busy = false;
+                self.status = match result {
+                    Ok(()) => "Saved G213 settings restored.".to_string(),
+                    Err(error) => format!("Restore failed: {error}"),
                 };
                 Task::none()
             }
@@ -328,6 +371,28 @@ impl G213App {
         }
     }
 
+    fn set_effect(&mut self, effect: Effect) {
+        match effect {
+            Effect::Static(color) => {
+                self.selected_effect = EffectTab::Static;
+                self.static_color = color;
+            }
+            Effect::Cycle { speed_ms } => {
+                self.selected_effect = EffectTab::Cycle;
+                self.cycle_speed_ms = speed_ms;
+            }
+            Effect::Breathe { color, speed_ms } => {
+                self.selected_effect = EffectTab::Breathe;
+                self.breathe_color = color;
+                self.breathe_speed_ms = speed_ms;
+            }
+            Effect::Segments(colors) => {
+                self.selected_effect = EffectTab::Segments;
+                self.segment_colors = colors;
+            }
+        }
+    }
+
     fn static_controls(&self) -> Element<'_, Message> {
         column![
             text(format!("Static #{hex}", hex = self.static_color.to_hex())),
@@ -397,6 +462,20 @@ impl G213App {
         }
         controls.into()
     }
+}
+
+fn load_saved_effect() -> std::result::Result<Option<Effect>, String> {
+    let path = config::user_config_path(Product::G213).map_err(|error| error.to_string())?;
+    let saved_config = match config::read_config(path) {
+        Ok(config) => config,
+        Err(G213Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(None);
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+
+    let spec = crate::product::spec_for(saved_config.product);
+    effect_from_commands(spec, &saved_config.commands).map_err(|error| error.to_string())
 }
 
 fn rgb_sliders<'a>(

@@ -35,7 +35,10 @@ if [ "$PKG_MANAGER" = "pacman" ]; then
         cargo \
         pkgconf \
         libxkbcommon \
-        wayland \
+        libx11 \
+        libxcb \
+        libxcursor \
+        libxi \
         fontconfig
 
 elif [ "$PKG_MANAGER" = "apt" ]; then
@@ -49,7 +52,10 @@ elif [ "$PKG_MANAGER" = "apt" ]; then
         build-essential \
         pkg-config \
         libxkbcommon-dev \
-        libwayland-dev \
+        libx11-dev \
+        libxcb1-dev \
+        libxcursor-dev \
+        libxi-dev \
         libfontconfig1-dev
 fi
 

@@ -1,7 +1,9 @@
 use std::fmt;
 
-use iced::widget::{button, checkbox, column, container, pick_list, row, rule, slider, text};
-use iced::{Element, Length, Task};
+use iced::widget::{
+    button, checkbox, column, container, pick_list, row, rule, scrollable, slider, space, text,
+};
+use iced::{alignment, border, Color, Element, Length, Task, Theme};
 
 use crate::command::{effect_from_commands, Effect, Rgb};
 use crate::config;
@@ -20,11 +22,17 @@ const EFFECT_TABS: [EffectTab; 4] = [
 pub fn run() -> iced::Result {
     iced::application(G213App::new, G213App::update, G213App::view)
         .title(app_title)
+        .theme(app_theme)
+        .window_size([640.0, 740.0])
         .run()
 }
 
 fn app_title(_: &G213App) -> String {
     APP_TITLE.to_string()
+}
+
+fn app_theme(_: &G213App) -> Theme {
+    Theme::Dark
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -303,26 +311,41 @@ impl G213App {
             button("Set G213")
         };
 
-        let header = column![
-            text(APP_TITLE).size(28),
-            text("Logitech G213 lighting controller").size(16),
-            row![
-                scan_button,
-                set_button,
-                text(if self.connected_g213 {
-                    "Connected"
-                } else {
-                    "Not detected"
-                })
+        let header = row![
+            column![
+                text(APP_TITLE).size(28),
+                text(self.effect_summary()).size(14),
             ]
-            .spacing(12)
+            .spacing(4),
+            space().width(Length::Fill),
+            status_badge(self.connected_g213, self.busy),
         ]
-        .spacing(8);
+        .spacing(16)
+        .align_y(alignment::Vertical::Center);
+
+        let actions = panel(
+            column![
+                row![scan_button, set_button, space().width(Length::Fill),]
+                    .spacing(12)
+                    .align_y(alignment::Vertical::Center),
+                text(&self.status).size(14),
+            ]
+            .spacing(10),
+        );
 
         let effect_picker = pick_list(
             EFFECT_TABS.as_slice(),
             Some(self.selected_effect),
             Message::EffectSelected,
+        );
+
+        let effect_selector = panel(
+            row![
+                text("Effect").size(14).width(Length::Fixed(88.0)),
+                effect_picker,
+            ]
+            .spacing(12)
+            .align_y(alignment::Vertical::Center),
         );
 
         let effect_controls = match self.selected_effect {
@@ -339,22 +362,52 @@ impl G213App {
             autostart.on_toggle(Message::AutostartToggled)
         };
 
-        container(
-            column![
-                header,
-                rule::horizontal(1),
-                row![text("Effect"), effect_picker].spacing(12),
-                effect_controls,
-                rule::horizontal(1),
-                autostart,
-                text(&self.status)
-            ]
-            .spacing(14),
-        )
+        let content = column![
+            header,
+            actions,
+            effect_selector,
+            panel(effect_controls),
+            panel(
+                row![
+                    autostart,
+                    space().width(Length::Fill),
+                    autostart_badge(self.autostart_enabled)
+                ]
+                .spacing(12)
+                .align_y(alignment::Vertical::Center),
+            ),
+        ]
+        .spacing(12)
+        .max_width(720.0)
+        .width(Length::Fill);
+
+        container(scrollable(
+            column![content, rule::horizontal(1), text("G213 Prodigy").size(13),].spacing(12),
+        ))
         .padding(18)
+        .center_x(Length::Fill)
         .width(Length::Fill)
         .height(Length::Fill)
+        .style(page_style)
         .into()
+    }
+
+    fn effect_summary(&self) -> String {
+        match self.current_effect() {
+            Effect::Static(color) => format!("Static #{hex}", hex = color.to_hex()),
+            Effect::Cycle { speed_ms } => format!("Cycle {speed_ms} ms"),
+            Effect::Breathe { color, speed_ms } => {
+                format!("Breathe #{hex} at {speed_ms} ms", hex = color.to_hex())
+            }
+            Effect::Segments(colors) => {
+                let preview = colors
+                    .iter()
+                    .map(|color| format!("#{}", color.to_hex()))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!("Segments {preview}")
+            }
+        }
     }
 
     fn current_effect(&self) -> Effect {
@@ -395,7 +448,7 @@ impl G213App {
 
     fn static_controls(&self) -> Element<'_, Message> {
         column![
-            text(format!("Static #{hex}", hex = self.static_color.to_hex())),
+            large_color_preview("Static color", self.static_color),
             rgb_sliders(
                 self.static_color,
                 Message::StaticRedChanged,
@@ -403,65 +456,243 @@ impl G213App {
                 Message::StaticBlueChanged,
             )
         ]
-        .spacing(10)
+        .spacing(14)
         .into()
     }
 
     fn cycle_controls(&self) -> Element<'_, Message> {
         column![
-            text(format!("Speed: {} ms", self.cycle_speed_ms)),
+            metric_row("Cycle speed", format!("{} ms", self.cycle_speed_ms)),
             slider(
                 500..=65_535,
                 self.cycle_speed_ms,
                 Message::CycleSpeedChanged
             )
         ]
-        .spacing(10)
+        .spacing(14)
         .into()
     }
 
     fn breathe_controls(&self) -> Element<'_, Message> {
         column![
-            text(format!("Breathe #{hex}", hex = self.breathe_color.to_hex())),
+            large_color_preview("Breathe color", self.breathe_color),
             rgb_sliders(
                 self.breathe_color,
                 Message::BreatheRedChanged,
                 Message::BreatheGreenChanged,
                 Message::BreatheBlueChanged,
             ),
-            text(format!("Speed: {} ms", self.breathe_speed_ms)),
+            metric_row("Breathe speed", format!("{} ms", self.breathe_speed_ms)),
             slider(
                 500..=65_535,
                 self.breathe_speed_ms,
                 Message::BreatheSpeedChanged
             )
         ]
-        .spacing(10)
+        .spacing(14)
         .into()
     }
 
     fn segment_controls(&self) -> Element<'_, Message> {
-        let mut controls = column![].spacing(12);
+        let mut controls = column![segment_strip(self.segment_colors)].spacing(12);
         for (index, color) in self.segment_colors.iter().copied().enumerate() {
-            controls = controls.push(
-                column![
-                    text(format!(
-                        "Segment {} #{hex}",
-                        index + 1,
-                        hex = color.to_hex()
-                    )),
-                    rgb_sliders(
-                        color,
-                        move |value| Message::SegmentRedChanged(index, value),
-                        move |value| Message::SegmentGreenChanged(index, value),
-                        move |value| Message::SegmentBlueChanged(index, value),
-                    )
-                ]
-                .spacing(6),
-            );
+            controls = controls.push(segment_panel(index, color));
         }
         controls.into()
     }
+}
+
+fn panel<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(content)
+        .padding(16)
+        .width(Length::Fill)
+        .style(panel_style)
+        .into()
+}
+
+fn segment_panel(index: usize, color: Rgb) -> Element<'static, Message> {
+    container(
+        column![
+            color_heading(format!("Segment {}", index + 1), color),
+            rgb_sliders(
+                color,
+                move |value| Message::SegmentRedChanged(index, value),
+                move |value| Message::SegmentGreenChanged(index, value),
+                move |value| Message::SegmentBlueChanged(index, value),
+            )
+        ]
+        .spacing(8),
+    )
+    .padding(12)
+    .width(Length::Fill)
+    .style(subtle_panel_style)
+    .into()
+}
+
+fn segment_strip(colors: [Rgb; 5]) -> Element<'static, Message> {
+    let mut strip = row![].spacing(6).width(Length::Fill);
+    for color in colors {
+        strip = strip.push(
+            container(text(""))
+                .height(16)
+                .width(Length::FillPortion(1))
+                .style(move |_| color_box_style(color, 3)),
+        );
+    }
+
+    strip.into()
+}
+
+fn large_color_preview(label: &str, color: Rgb) -> Element<'static, Message> {
+    row![
+        container(text(""))
+            .width(72)
+            .height(56)
+            .style(move |_| color_box_style(color, 6)),
+        column![
+            text(label.to_string()).size(14),
+            text(format!("#{hex}", hex = color.to_hex())).size(22),
+        ]
+        .spacing(4)
+    ]
+    .spacing(14)
+    .align_y(alignment::Vertical::Center)
+    .into()
+}
+
+fn color_heading(label: impl Into<String>, color: Rgb) -> Element<'static, Message> {
+    let label = label.into();
+
+    row![
+        color_swatch(color),
+        text(format!("{label} #{hex}", hex = color.to_hex()))
+    ]
+    .spacing(8)
+    .align_y(alignment::Vertical::Center)
+    .into()
+}
+
+fn color_swatch(color: Rgb) -> Element<'static, Message> {
+    container(text(""))
+        .width(24)
+        .height(24)
+        .style(move |_| color_box_style(color, 4))
+        .into()
+}
+
+fn rgb_sliders<'a>(
+    color: Rgb,
+    red_message: impl Fn(u8) -> Message + 'a,
+    green_message: impl Fn(u8) -> Message + 'a,
+    blue_message: impl Fn(u8) -> Message + 'a,
+) -> Element<'a, Message> {
+    column![
+        channel_slider("R", color.red, red_message),
+        channel_slider("G", color.green, green_message),
+        channel_slider("B", color.blue, blue_message),
+    ]
+    .spacing(8)
+    .into()
+}
+
+fn channel_slider<'a>(
+    label: &'static str,
+    value: u8,
+    on_change: impl Fn(u8) -> Message + 'a,
+) -> Element<'a, Message> {
+    row![
+        text(label).width(Length::Fixed(24.0)),
+        slider(0..=255, value, on_change),
+        text(format!("{value:>3}")).width(Length::Fixed(44.0))
+    ]
+    .spacing(10)
+    .align_y(alignment::Vertical::Center)
+    .into()
+}
+
+fn metric_row(label: &'static str, value: String) -> Element<'static, Message> {
+    row![
+        text(label).size(14),
+        space().width(Length::Fill),
+        text(value).size(22)
+    ]
+    .spacing(12)
+    .align_y(alignment::Vertical::Center)
+    .into()
+}
+
+fn status_badge(connected: bool, busy: bool) -> Element<'static, Message> {
+    let (label, color) = if busy {
+        ("Working", Color::from_rgb8(218, 165, 32))
+    } else if connected {
+        ("Connected", Color::from_rgb8(45, 160, 92))
+    } else {
+        ("Not detected", Color::from_rgb8(150, 155, 165))
+    };
+
+    container(text(label).size(13))
+        .padding([6, 10])
+        .style(move |_| {
+            iced::widget::container::Style::default()
+                .background(color)
+                .color(Color::WHITE)
+                .border(border::rounded(4))
+        })
+        .into()
+}
+
+fn autostart_badge(enabled: bool) -> Element<'static, Message> {
+    let (label, color) = if enabled {
+        ("Enabled", Color::from_rgb8(70, 130, 180))
+    } else {
+        ("Off", Color::from_rgb8(110, 116, 128))
+    };
+
+    container(text(label).size(13))
+        .padding([6, 10])
+        .style(move |_| {
+            iced::widget::container::Style::default()
+                .background(color)
+                .color(Color::WHITE)
+                .border(border::rounded(4))
+        })
+        .into()
+}
+
+fn page_style(_: &Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style::default().background(Color::from_rgb8(22, 24, 28))
+}
+
+fn panel_style(_: &Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style::default()
+        .background(Color::from_rgb8(34, 37, 43))
+        .border(
+            border::rounded(6)
+                .width(1)
+                .color(Color::from_rgb8(58, 63, 73)),
+        )
+}
+
+fn subtle_panel_style(_: &Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style::default()
+        .background(Color::from_rgb8(28, 31, 36))
+        .border(
+            border::rounded(6)
+                .width(1)
+                .color(Color::from_rgb8(48, 53, 61)),
+        )
+}
+
+fn color_box_style(color: Rgb, radius: u32) -> iced::widget::container::Style {
+    let fill = Color::from_rgb8(color.red, color.green, color.blue);
+
+    iced::widget::container::Style::default()
+        .background(fill)
+        .border(
+            border::rounded(radius)
+                .width(1)
+                .color(Color::from_rgb8(8, 10, 12)),
+        )
 }
 
 fn load_saved_effect() -> std::result::Result<Option<Effect>, String> {
@@ -476,34 +707,4 @@ fn load_saved_effect() -> std::result::Result<Option<Effect>, String> {
 
     let spec = crate::product::spec_for(saved_config.product);
     effect_from_commands(spec, &saved_config.commands).map_err(|error| error.to_string())
-}
-
-fn rgb_sliders<'a>(
-    color: Rgb,
-    red_message: impl Fn(u8) -> Message + 'a,
-    green_message: impl Fn(u8) -> Message + 'a,
-    blue_message: impl Fn(u8) -> Message + 'a,
-) -> Element<'a, Message> {
-    column![
-        row![
-            text("R").width(20),
-            slider(0..=255, color.red, red_message),
-            text(color.red)
-        ]
-        .spacing(8),
-        row![
-            text("G").width(20),
-            slider(0..=255, color.green, green_message),
-            text(color.green)
-        ]
-        .spacing(8),
-        row![
-            text("B").width(20),
-            slider(0..=255, color.blue, blue_message),
-            text(color.blue)
-        ]
-        .spacing(8)
-    ]
-    .spacing(6)
-    .into()
 }

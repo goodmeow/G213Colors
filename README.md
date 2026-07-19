@@ -168,6 +168,6 @@ To remove the application and all system-wide components:
 sudo make uninstall
 ```
 
-This will remove the application files, the system-wide configuration file (`/etc/G213Colors.conf`), the systemd service unit, the udev rule, desktop entry, and Polkit policy.
+This will remove the application files, the system-wide configuration file (`/etc/G213Colors.conf`), the systemd service unit, the udev rule, desktop entry, and any legacy Polkit policy from older installs.
 
 **Note on User Files:** The uninstallation command does not remove your personal configuration files (in `~/.config/G213Colors/`) or any autostart entries you created via the GUI (in `~/.config/autostart/`). You can remove these manually if desired, or simply uncheck the "Apply user settings on login" boxes in the GUI before uninstalling.

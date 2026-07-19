@@ -30,7 +30,7 @@ install:
 	install -Dm644 icons/G213Colors-128.png $(ICONDIR)/128x128/apps/g213colors.png
 	install -Dm644 icons/G213Colors-192.png $(ICONDIR)/192x192/apps/g213colors.png
 	install -Dm644 G213Colors.desktop $(APPDIR)/g213colors.desktop
-	install -Dm644 be.jeroened.pkexec.g213colors.policy $(POLKITDIR)/be.jeroened.pkexec.g213colors.policy
+	rm -f $(POLKITDIR)/be.jeroened.pkexec.g213colors.policy
 	@echo "Creating udev rules for Logitech device permissions..."
 	@printf '%s\n' \
 		'# Logitech G213 Keyboard' \

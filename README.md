@@ -1,22 +1,27 @@
-# G213Colors & G203Colors Control
+# G213Colors
 
-An application to manage the illuminated key colors and effects on Logitech G213 Prodigy Gaming Keyboards and G203 Prodigy Gaming Mice on Linux.
+A Rust/Iced application to manage the illuminated key colors and effects on
+Logitech G213 Prodigy Gaming Keyboards on Linux.
 
 This project is based on the work of [JeroenED's G213Colors-gui](https://github.com/JeroenED/G213Colors-gui) and [SebiTimeWaster's G213Colors](https://github.com/SebiTimeWaster/G213Colors), updated and enhanced for modern Linux distributions.
 
 ## Features
 
 * Control static colors, breathing effects, and cycle effects.
-* G213: Control individual keyboard segments.
-* GUI for easy color selection and effect management.
+* Control individual G213 keyboard segments.
+* Iced GUI for color selection and effect management.
 * Settings are saved per user.
-* System service to apply a default color scheme at system startup (for G213).
-* **New:** Option to automatically apply a user's last saved settings for each device when they log into their desktop session.
+* System service to apply a default color scheme at system startup.
+* Option to automatically apply the user's last saved G213 settings on desktop login.
+* Device registry architecture for future Logitech G device contributions.
 
 ## Supported Devices
 
 * Logitech G213 Prodigy Gaming Keyboard
-* Logitech G203 Prodigy Gaming Mouse
+
+The current Rust MVP intentionally supports G213 only. See
+[`docs/adding-devices.md`](docs/adding-devices.md) for the extension path for
+other Logitech G devices.
 
 ## Installation
 
@@ -42,12 +47,10 @@ If you prefer to install dependencies manually:
 
 ```bash
 # Arch Linux
-sudo pacman -S python-pyusb python-gobject gtk3 python-cairo pango
-sudo python3 -m pip install randomcolor --break-system-packages
+sudo pacman -S rust cargo pkgconf libusb libxkbcommon wayland fontconfig
 
 # Debian/Ubuntu
-sudo apt-get install python3-usb python3-gi python3-gi-cairo gir1.2-gtk-3.0 python3-cairo
-sudo python3 -m pip install randomcolor --break-system-packages
+sudo apt-get install rustc cargo build-essential pkg-config libusb-1.0-0 libusb-1.0-0-dev libxkbcommon-dev libwayland-dev libfontconfig1-dev
 
 # Then run make install
 sudo make install
@@ -58,27 +61,34 @@ sudo make install
 ### GUI Mode (Recommended)
 Launch from application menu or terminal:
 ```bash
-g213colors-gui
+g213colors
 ```
 **No sudo required.** Settings are saved per-user in `~/.config/G213Colors/`.
 
 **Features:**
-- Select device (G213 or G203)
-- Choose effect: Static color, Cycle, Breathe, or Segments (G213 only)
-- Click "Set G213" / "Set G203" to apply and save
+- Scan for G213
+- Choose effect: Static color, Cycle, Breathe, or Segments
+- Click "Set G213" to apply and save
 - Enable "Apply user settings on login" to auto-restore colors on desktop login
 
 ### CLI Mode
 ```bash
 # Apply system-wide default config (requires sudo)
-sudo g213colors-gui -t
+sudo g213colors -t
 
-# Apply user config for specific product
-g213colors-gui --apply-user-config G213
-g213colors-gui --apply-user-config G203
+# Apply user config
+g213colors --apply-user-config
+g213colors --apply-user-config G213
+
+# Developer hardware checks
+g213colors detect
+g213colors set-static ff0000
+g213colors set-cycle 5000
+g213colors set-breathe 00ff00 5000
+g213colors set-segment 1 0000ff
 
 # Show help
-g213colors-gui --help
+g213colors --help
 ```
 
 ### System Service
@@ -100,12 +110,12 @@ There are two main ways color settings are applied:
 ### 1. GUI Application (User-Specific Settings & Login Autostart)
 
 * Launch "G213 Colors" from your application menu. **It does not require `sudo` to run.**
-* Select your device (G213 or G203) and configure your desired colors and effects.
-* When you apply settings by clicking "Set G213", "Set G203", or "Set all Products", they are saved to your user's personal configuration directory (`~/.config/G213Colors/<DEVICE_NAME>.conf`, e.g., `G213.conf`). These settings are specific to your user account.
+* Configure your desired G213 colors and effects.
+* When you apply settings by clicking "Set G213", they are saved to your user's personal configuration directory (`~/.config/G213Colors/G213.conf`). These settings are specific to your user account.
 
 * **Applying Your Settings on Login:**
-    * The GUI now includes checkboxes at the bottom: "Apply user settings on login: [ ] G213 [ ] G203".
-    * If you check these boxes, your last saved configuration for the selected device(s) will be automatically applied when you log into your desktop session.
+    * The GUI includes a checkbox: "Apply user settings on login".
+    * If you check it, your last saved G213 configuration will be automatically applied when you log into your desktop session.
     * This works by creating a small startup file in your user's autostart directory (`~/.config/autostart/`).
     * This ensures your preferred colors are restored after the system's initial default (if any) is applied at boot.
 
@@ -113,11 +123,9 @@ There are two main ways color settings are applied:
 
 * The `INSTALL.sh` script sets up a systemd service (`g213colors.service`) that runs early during system startup.
 * This service automatically applies a default color scheme to the **Logitech G213 keyboard**, setting it to a standard white color. This configuration is stored in `/etc/G213Colors.conf`.
-* Currently, the G203 mouse does not have a color set by this system service at startup; its color will be its hardware default, or what its onboard memory retained, until you log in and your user-specific autostart (if enabled) applies your preference.
-
 **Order of Application:**
 1.  On system boot, `g213colors.service` sets the G213 to the system default (e.g., white).
-2.  When you log into your desktop, if you've enabled "Apply user settings on login" via the GUI, your saved preferences for G213/G203 will be applied, overriding the system default for your session.
+2.  When you log into your desktop, if you've enabled "Apply user settings on login" via the GUI, your saved G213 preference will be applied, overriding the system default for your session.
 
 **Customizing System-Wide Startup Colors:**
 If you wish to change the *system-wide default startup color* that the service applies (currently G213 white):
@@ -125,12 +133,12 @@ If you wish to change the *system-wide default startup color* that the service a
 2.  The file format requires the first line to be `PRODUCT=<DEVICE_NAME>` (e.g., `PRODUCT=G213`) followed by the raw hex command string for the device on the next line.
     *(A future enhancement may allow setting this system default more easily via the GUI.)*
 
-You can enable the system service to start on boot (this should be done automatically by `INSTALL.sh`) with:
+You can enable the system service to start on boot with:
 ```sudo systemctl enable g213colors.service```
 
 You can also manually trigger the application of the system default settings by running:
 
-```sudo /usr/bin/g213colors-gui -t```
+```sudo /usr/bin/g213colors -t```
 
 ## Screenshots 
 

@@ -7,7 +7,7 @@ After=hybrid-sleep.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/g213colors-gui -t
+ExecStart=/usr/bin/g213colors -t
 
 [Install]
 WantedBy=multi-user.target

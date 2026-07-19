@@ -2,7 +2,9 @@
 
 set -e
 
-echo "G213/G203 Colors - Installation Script"
+REQUIRED_RUST_VERSION="1.85.0"
+
+echo "G213 Colors - Installation Script"
 echo "---------------------------------------"
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -29,30 +31,39 @@ if [ "$PKG_MANAGER" = "pacman" ]; then
     pacman -Sy --noconfirm
     pacman -S --noconfirm --needed \
         libusb \
-        python \
-        python-pip \
-        python-pyusb \
-        python-gobject \
-        gtk3 \
-        python-cairo \
-        pango
-    python3 -m pip install randomcolor --break-system-packages 2>/dev/null || \
-    python3 -m pip install randomcolor
+        rust \
+        cargo \
+        pkgconf \
+        libxkbcommon \
+        wayland \
+        fontconfig
 
 elif [ "$PKG_MANAGER" = "apt" ]; then
     echo "Installing dependencies via apt..."
     apt-get update -y
     apt-get install -y \
         libusb-1.0-0 \
-        python3-pip \
-        python3-gi \
-        python3-gi-cairo \
-        gir1.2-gtk-3.0 \
-        python3-cairo \
-        python3-usb
-    python3 -m pip install randomcolor --break-system-packages 2>/dev/null || \
-    python3 -m pip install randomcolor
+        libusb-1.0-0-dev \
+        rustc \
+        cargo \
+        build-essential \
+        pkg-config \
+        libxkbcommon-dev \
+        libwayland-dev \
+        libfontconfig1-dev
 fi
+
+check_rust_version() {
+    current_version="$(rustc --version | awk '{print $2}')"
+    oldest_version="$(printf '%s\n%s\n' "$REQUIRED_RUST_VERSION" "$current_version" | sort -V | head -n1)"
+    if [ "$oldest_version" != "$REQUIRED_RUST_VERSION" ]; then
+        echo "ERROR: Rust $REQUIRED_RUST_VERSION or newer is required, found $current_version." >&2
+        echo "Install a current Rust toolchain with rustup, then rerun this installer." >&2
+        exit 1
+    fi
+}
+
+check_rust_version
 
 echo ""
 echo "Running make install..."
@@ -65,4 +76,4 @@ echo "This means only the currently logged-in user can access the device — mor
 echo ""
 echo "Installation complete!"
 echo "If your Logitech devices were already connected, you might need to unplug/replug them or reboot for udev rules to take effect."
-echo "Launch 'G213 Colors' from your application menu or run 'g213colors-gui' from terminal."
+echo "Launch 'G213 Colors' from your application menu or run 'g213colors' from terminal."

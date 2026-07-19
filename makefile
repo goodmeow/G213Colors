@@ -1,5 +1,6 @@
 PREFIX ?= /usr
 BINDIR = $(PREFIX)/bin
+BINPATH = $(BINDIR)/g213colors
 SYSCONFDIR = /etc
 SYSTEMDDIR = /etc/systemd/system
 ICONDIR = /usr/share/icons/hicolor
@@ -7,13 +8,20 @@ APPDIR = /usr/share/applications
 POLKITDIR = /usr/share/polkit-1/actions
 UDEVDIR = /etc/udev/rules.d
 
-.PHONY: install uninstall
+.PHONY: build install uninstall
+
+build:
+	G213COLORS_BIN_PATH=$(BINPATH) cargo build --release
 
 install:
 	@echo "=== Installing G213Colors ==="
-	install -Dm755 G213Colors.py $(BINDIR)/G213Colors.py
-	install -Dm755 main.py $(BINDIR)/g213colors-gui
-	install -Dm644 config_manager.py $(BINDIR)/config_manager.py
+	@if [ "$$(id -u)" -eq 0 ] && [ -n "$$SUDO_USER" ] && [ "$$SUDO_USER" != "root" ] && command -v sudo >/dev/null 2>&1; then \
+		echo "Building as $$SUDO_USER..."; \
+		sudo -u "$$SUDO_USER" env G213COLORS_BIN_PATH="$(BINPATH)" cargo build --release; \
+	else \
+		G213COLORS_BIN_PATH="$(BINPATH)" cargo build --release; \
+	fi
+	install -Dm755 target/release/g213colors $(BINPATH)
 	install -Dm644 g213colors.service $(SYSTEMDDIR)/g213colors.service
 	install -Dm644 icons/G213Colors-16.png $(ICONDIR)/16x16/apps/g213colors.png
 	install -Dm644 icons/G213Colors-24.png $(ICONDIR)/24x24/apps/g213colors.png
@@ -28,8 +36,6 @@ install:
 		'# Logitech G213 Keyboard' \
 		'SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c336", TAG+="uaccess"' \
 		'' \
-		'# Logitech G203 Mouse' \
-		'SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c084", TAG+="uaccess"' \
 		| install -Dm644 /dev/stdin $(UDEVDIR)/99-logitech-usb-permissions.rules
 	@if [ ! -f $(SYSCONFDIR)/G213Colors.conf ]; then \
 		echo "Creating default system configuration at $(SYSCONFDIR)/G213Colors.conf..."; \
@@ -43,14 +49,12 @@ install:
 	-gtk-update-icon-cache -q $(ICONDIR)/ 2>/dev/null || true
 	-systemctl daemon-reload 2>/dev/null || true
 	@echo "=== Installation complete ==="
-	@echo "Run 'g213colors-gui' to launch the application."
+	@echo "Run 'g213colors' to launch the application."
 	@echo "Enable system service with: sudo systemctl enable g213colors.service"
 
 uninstall:
 	@echo "=== Uninstalling G213Colors ==="
-	-rm -f $(BINDIR)/G213Colors.py
-	-rm -f $(BINDIR)/g213colors-gui
-	-rm -f $(BINDIR)/config_manager.py
+	-rm -f $(BINDIR)/g213colors
 	-rm -f $(SYSCONFDIR)/G213Colors.conf
 	-rm -f $(SYSTEMDDIR)/g213colors.service
 	-rm -f $(UDEVDIR)/99-logitech-usb-permissions.rules
